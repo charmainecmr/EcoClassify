@@ -1,2 +1,9 @@
 streamlit
-openai
+ultralytics==8.0.196   # YOLOv8 (pinned for stability, upgrade if needed)
+roboflow
+opencv-python
+pillow
+numpy
+torch                  # PyTorch backend
+torchvision
+streamlit-option-menu

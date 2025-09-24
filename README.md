@@ -1,6 +1,6 @@
-# 📄 Document question answering template
+# EcoClassify. An AI Recycling Assistant
 
-A simple Streamlit app that answers questions about an uploaded document via OpenAI's GPT-3.5.
+A simple Streamlit app that classifies recylables.
 
 [![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://document-question-answering-template.streamlit.app/)
 
@@ -16,4 +16,10 @@ A simple Streamlit app that answers questions about an uploaded document via Ope
 
    ```
    $ streamlit run streamlit_app.py
+   ```
+
+### (Optional) One-click setup
+Instead of manual steps, you can run the included setup script.
+   ```
+   $ setup_env.bat
    ```
