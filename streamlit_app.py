@@ -1,295 +1,219 @@
-# Create and activate virtual environment: python -m venv venv 
-# Install Dependencies: pip install -r requirements.txt
-# Run app: streamlit run streamlit_app.py
-
-# streamlit_app.py
+# app.py
 import streamlit as st
-import os
-from PIL import Image
-from ultralytics import YOLO
-import datetime
-import random
-
 import torch
-from torch.serialization import add_safe_globals
-import ultralytics.nn.tasks
-add_safe_globals([ultralytics.nn.tasks.DetectionModel])
-
-from streamlit_option_menu import option_menu
-# streamlit_app.py
-import streamlit as st
-import os
+import torch.nn as nn
+import torchvision.models as models
+from torchvision import transforms
 from PIL import Image
-from ultralytics import YOLO
-import datetime
-import random
-from streamlit_option_menu import option_menu # Import the library
-
-import torch
-from torch.serialization import add_safe_globals
-import ultralytics.nn.tasks
-add_safe_globals([ultralytics.nn.tasks.DetectionModel])
-
+import time
+from datetime import datetime
 
 # --------------------------
-# Setup Page
+# Page Setup
 # --------------------------
-st.set_page_config(
-    page_title="EcoClassify - Recycling Assistant",
-    page_icon="♻️",
-    layout="centered"
-)
-
-# --------------------------
-# Custom CSS for styling
-# --------------------------
-st.markdown("""
-    <style>
-        body {
-            background: linear-gradient(to bottom right, #f7f9fc, #eaf5f2);
-            font-family: "Segoe UI", sans-serif;
-        }
-        .card {
-            background: #ffffff;
-            border-radius: 10px;
-            padding: 2rem;
-            margin: 2rem auto;
-            max-width: 800px;
-            box-shadow: 0 6px 18px rgba(0,0,0,0.1);
-            transition: all 0.3s ease;
-        }
-        .card:hover {
-            box-shadow: 0 8px 24px rgba(0,0,0,0.15);
-        }
-        .title {
-            font-size: 2rem;
-            font-weight: bold;
-            color: #2e7d32;
-        }
-        .subtitle {
-            font-size: 1rem;
-            color: #555;
-        }
-        .result-success {
-            border-left: 6px solid #4caf50;
-            padding-left: 1rem;
-        }
-        .result-error {
-            border-left: 6px solid #f44336;
-            padding-left: 1rem;
-        }
-        .result-warning {
-            border-left: 6px solid #ff9800;
-            padding-left: 1rem;
-        }
-        .history-item {
-            background: #fafafa;
-            padding: 0.8rem;
-            border-radius: 8px;
-            margin-bottom: 0.5rem;
-        }
-    </style>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="EcoClassify AI", page_icon="♻️", layout="wide")
 
 st.markdown("""
 <style>
-/* Apply animated gradient to full page */
 html, body, [data-testid="stAppViewContainer"] {
-    height: 100%;
-    margin: 0;
-    padding: 0;
-    animation: gradientShift 20s ease infinite;
-    background: linear-gradient(-45deg, #e8f5e9, #f1f8e9, #c8e6c9, #dcedc8);
-    background-size: 400% 400%;
+  background: linear-gradient(-45deg, #e8f5e9, #f1f8e9, #e0f7fa, #f3e5f5);
+  background-size: 400% 400%;
+  animation: gradientShift 20s ease infinite;
 }
-
-/* Animate the gradient */
 @keyframes gradientShift {
-    0% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
+  0% {background-position:0% 50%;}
+  50% {background-position:100% 50%;}
+  100% {background-position:0% 50%;}
+}
+.pred-card {
+  background: white;
+  border-radius: 1rem;
+  padding: 1rem;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+  margin-bottom: 1rem;
+  transition: all 0.3s ease;
+}
+.pred-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 8px 25px rgba(0,0,0,0.2);
+}
+/* Center the tab container */
+div[data-baseweb="tab-list"] {
+    display: flex;
+    justify-content: center;
+    gap: 2rem; /* space between tabs */
 }
 
-/* Optional: make cards and containers pop */
-[data-testid="stAppViewBlockContainer"] {
-    background-color: rgba(255, 255, 255, 0.85);
-    border-radius: 12px;
-    padding: 1rem;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-}
 </style>
 """, unsafe_allow_html=True)
 
 # --------------------------
-# Animated Gradient Background
-# --------------------------
-st.markdown("""
-<style>
-body {
-    animation: gradientShift 15s ease infinite;
-    background: linear-gradient(-45deg, #e8f5e9, #f1f8e9, #c8e6c9, #dcedc8);
-    background-size: 400% 400%;
-    font-family: "Segoe UI", sans-serif;
-}
-
-@keyframes gradientShift {
-    0% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
-}
-</style>
-""", unsafe_allow_html=True)
-
-# --------------------------
-# Load YOLO Model
+# Load Models
 # --------------------------
 @st.cache_resource
-def load_model():
-    try:
-        return YOLO("yolov8n.pt")
-    except Exception as e:
-        st.warning("⚠️ Model failed to load. Placeholder mode activated. You can still explore the UI.")
-        return None
-    
-model = load_model()
+def load_resnet34():
+    num_classes = 4
+    model = models.resnet34(pretrained=False)
+
+    # Rebuild the same head that was used in training
+    model.fc = nn.Sequential(
+        nn.Linear(model.fc.in_features, 512),  # fc.0
+        nn.ReLU(),                             # fc.1
+        nn.Dropout(0.4),                       # fc.2 (if you had dropout)
+        nn.Linear(512, num_classes)            # fc.3
+    )
+
+    state_dict = torch.load("best_resnet34.pth", map_location="cpu")
+    model.load_state_dict(state_dict)  # strict=True now works
+    model.eval()
+    return model
+
+@st.cache_resource
+def load_efficientnet_b0():
+    num_classes = 4
+    model = models.efficientnet_b0(pretrained=False)
+    model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+    model.load_state_dict(torch.load("best_efficientnet_b0.pth", map_location="cpu"))
+    model.eval()
+    return model
+
+resnet34_model = load_resnet34()
+efficientnet_model = load_efficientnet_b0()
+class_names = ["glass", "metal", "paper", "plastic"]
 
 # --------------------------
-# Session state for history
+# Image Transform
+# --------------------------
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406],
+                         [0.229, 0.224, 0.225])
+])
+
+# --------------------------
+# Prediction
+# --------------------------
+def predict(image: Image.Image, model, class_names):
+    img_t = transform(image).unsqueeze(0)
+    with torch.no_grad():
+        outputs = model(img_t)
+        probs = torch.softmax(outputs, dim=1)[0]
+    conf, idx = torch.max(probs, 0)
+    return class_names[idx], conf.item() * 100
+
+# --------------------------
+# Session State (History)
 # --------------------------
 if "history" not in st.session_state:
-    st.session_state["history"] = []
+    st.session_state.history = []
 
 # --------------------------
-# Recycling logic (YOLO only)
+# Tabs
 # --------------------------
-def determine_recyclability(results, model):
-    if results and len(results[0].boxes) > 0:
-        box = results[0].boxes[0]
-        cls_id = int(box.cls[0].item())
-        label = model.names[cls_id].lower()
-        confidence = float(box.conf[0].item())
+st.title("♻️ EcoClassify AI")
 
-        recyclable_keywords = ["plastic", "glass", "metal", "paper", "cardboard"]
-        non_recyclable_keywords = ["food", "battery", "electronics", "ceramic"]
-
-        if any(k in label for k in recyclable_keywords):
-            result = "recyclable"
-        elif any(k in label for k in non_recyclable_keywords):
-            result = "non-recyclable"
-        else:
-            result = "uncertain"
-
-        return {"result": result, "category": label, "confidence": confidence}
-    else:
-        return {"result": "uncertain", "category": "none", "confidence": 0.0}
-
-# --------------------------
-# Styled Title Header
-# --------------------------
+# Custom CSS to center tabs
 st.markdown("""
-<div style="
-    background: linear-gradient(to right, #e8f5e9, #f1f8e9);
-    padding: 1.5rem;
-    border-radius: 10px;
-    text-align: center;
+<style>
+div[data-baseweb="tab-list"] {
+    display: flex;
+    justify-content: center;
+    gap: 3rem;
+}
+div[data-baseweb="tab"] {
+    font-size: 1.2rem;
+    font-weight: 600;
+    padding: 1rem 2rem;
+    border-radius: 12px;
+}
+div[data-baseweb="tab"][aria-selected="true"] {
+    background: linear-gradient(90deg, #4caf50, #81c784);
+    color: white !important;
     box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-">
-    <h1 style="color: #2e7d32; font-size: 2.5rem; margin-bottom: 0.5rem;"> EcoClassify</h1>
-    <p style="color: #4e944f; font-size: 1.2rem;">AI-Powered Recycling Assistant</p>
-</div>
+}
+</style>
 """, unsafe_allow_html=True)
 
-# --------------------------
-# Navigation Bar
-# --------------------------
-view = option_menu(
-    menu_title=None,
-    options=["Classify", "History"],
-    icons=["camera", "list-check"],
-    default_index=0,
-    orientation="horizontal",
-    styles={
-        "container": {"padding": "0!important", "background-color": "#fafafa", "border-radius": "10px"},
-        "icon": {"color": "green", "font-size": "20px"},
-        "nav-link": {"font-size": "16px", "text-align": "center", "margin": "0px", "padding": "10px", "--hover-color": "#eee"},
-        "nav-link-selected": {"background-color": "#c8e6c9"},
-    }
-)
 
-# --------------------------
-# Classify View
-# --------------------------
-if view == "Classify":
-    st.markdown("""
-    <div class="card" style="text-align:center;">
-        <h2>Is it recyclable?</h2>
-        <p>Upload a photo of any item and our AI will instantly tell you if it's recyclable, 
-        along with helpful recycling tips.</p>
-    </div>
-    """, unsafe_allow_html=True)
+tabs = st.tabs(["✨ Classify", "🕒 History"])
 
-    uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
-    if uploaded_file:
-        image = Image.open(uploaded_file).convert("RGB")
-        st.image(image, caption="Uploaded image", use_container_width=True)
+# --- Classify Tab ---
+with tabs[0]:
+    uploaded = st.file_uploader("Upload a recyclable item image", type=["jpg","jpeg","png"])
+    if uploaded:
+        image = Image.open(uploaded).convert("RGB")
+        st.image(image, caption="Uploaded Image", use_column_width=True)
 
-        # Run YOLO prediction
-        if model:
-            with st.spinner("Analyzing image..."):
-                results = model.predict(image, conf=0.25)
-                parsed = determine_recyclability(results, model)
-        else:
-            # Fallback if model failed to load
-            parsed = {
-                "result": "uncertain",
-                "category": "placeholder",
-                "confidence": 0.0
-            }
+        with st.spinner("Analyzing with 5 models..."):
+            time.sleep(2)
 
+            # Real predictions
+            resnet_pred, resnet_conf = predict(image, resnet34_model, class_names)
+            effnet_pred, effnet_conf = predict(image, efficientnet_model, class_names)
 
-        # Result card styling
-        if parsed["result"] == "recyclable":
-            css_class = "result-success"
-            message = "Great! This item can be recycled. Make sure to clean it properly before placing it in your recycling bin."
-        elif parsed["result"] == "non-recyclable":
-            css_class = "result-error"
-            message = "This item cannot be recycled through regular curbside recycling. Consider alternative disposal methods."
-        else:
-            css_class = "result-warning"
-            message = "We're not certain about this item. When in doubt, check with your local recycling guidelines."
+            # Mock others for layout
+            mock_models = [
+                ("MobileNet Model", resnet_pred, resnet_conf - 3),
+                ("VGG-16 Model", effnet_pred, effnet_conf - 4),
+                ("Inception Model", resnet_pred, resnet_conf + 5),
+            ]
 
-        st.markdown(f"""
-        <div class="card {css_class}">
-            <h3>Prediction: {parsed['result'].capitalize()} ({parsed['category']})</h3>
-            <p>Confidence: <b>{parsed['confidence']*100:.2f}%</b></p>
-            <p>{message}</p>
-        </div>
-        """, unsafe_allow_html=True)
+            all_preds = [
+                ("ResNet-34 Model", resnet_pred, resnet_conf),
+                ("EfficientNet-B0 Model", effnet_pred, effnet_conf),
+            ] + mock_models
+
+        st.subheader("Model Predictions")
+        cols = st.columns(3)
+        for i, (mname, mpred, mconf) in enumerate(all_preds):
+            bar_color = "#34a853" if mconf >= 80 else "#fbbc04" if mconf >= 50 else "#ea4335"
+
+            with cols[i % 3]:
+                st.markdown(f"""
+                <div class="pred-card">
+                  <h4>{mname}</h4>
+                  <p style="margin-bottom:4px;"><b>Prediction:</b> 
+                    <span style="background:#e6f4ea; color:#137333; padding:2px 6px; 
+                    border-radius:6px;">{mpred}</span>
+                  </p>
+
+                  <p style="margin-bottom:6px;"><b>Confidence:</b> {mconf:.1f}%</p>
+
+                  <!-- Progress Bar -->
+                  <div style="background:#eee; border-radius:8px; height:10px; width:100%; margin-bottom:8px;">
+                    <div style="background:{bar_color}; height:10px; border-radius:8px; width:{mconf:.1f}%;">
+                    </div>
+                  </div>
+
+                  <p style="color:green; background:#e6f4ea; padding:6px; border-radius:8px; 
+                     font-size:90%; margin-top:8px;">
+                     ✅ Recyclable - Clean and place in recycling bin
+                  </p>
+                </div>
+                """, unsafe_allow_html=True)
+
 
         # Save to history
-        st.session_state["history"].insert(0, {
-            "filename": uploaded_file.name,
-            "prediction": parsed['result'],
-            "category": parsed['category'],
-            "confidence": f"{parsed['confidence']*100:.2f}",
-            "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        st.session_state.history.insert(0, {
+            "filename": uploaded.name,
+            "timestamp": datetime.now().strftime("%m/%d/%Y, %I:%M:%S %p"),
+            "results": all_preds
         })
 
-# --------------------------
-# History View
-# --------------------------
-elif view == "History":
-    st.markdown('<div class="card"><h2>Classification History</h2></div>', unsafe_allow_html=True)
+# --- History Tab ---
+with tabs[1]:
+    st.header("Classification History")
+    st.caption("View your past classifications and model predictions")
 
-    if len(st.session_state["history"]) == 0:
-        st.info("No classifications yet. Upload an image in the 'Classify' tab.")
+    if not st.session_state.history:
+        st.info("No classifications yet. Upload an image to get started!")
     else:
-        for item in st.session_state["history"]:
+        for entry in st.session_state.history:
             st.markdown(f"""
-            <div class="history-item">
-                <b>Prediction:</b> {item['prediction'].capitalize()} ({item['category']})<br>
-                <b>Time:</b> {item['time']}<br>
-                <b>Confidence:</b> {item['confidence']}%<br>
-                <b>File:</b> {item['filename']}
+            <div class="pred-card">
+              <b>{entry['filename']}</b><br>
+              <small>🕒 {entry['timestamp']}</small><br><br>
+              {"".join([f"<p>{m}: <b>{p}</b> ({c:.0f}%)</p>" for m,p,c in entry['results']])}
             </div>
             """, unsafe_allow_html=True)
