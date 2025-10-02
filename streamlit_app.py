@@ -246,10 +246,37 @@ with tabs[1]:
         st.info("No classifications yet. Upload an image to get started!")
     else:
         for entry in st.session_state.history:
+            # Card container (open, don't close yet)
             st.markdown(f"""
-            <div class="pred-card">
-              <b>{entry['filename']}</b><br>
-              <small>🕒 {entry['timestamp']}</small><br><br>
-              {"".join([f"<p>{m}: <b>{p}</b> ({c:.0f}%)</p>" for m,p,c in entry['results']])}
-            </div>
+            <div class="pred-card" style="padding:1.5rem; margin-bottom:1.5rem;">
+              <b style="font-size:1.1rem;">{entry['filename']}</b><br>
+              <small style="color:gray;">🕒 {entry['timestamp']}</small><br><br>
             """, unsafe_allow_html=True)
+
+            # Loop through model results (rows stay inside this card)
+            for m, p, c in entry["results"]:
+                colors = class_colors.get(p.lower(), {"bg": "#e6f4ea", "text": "#137333"})
+                st.markdown(f"""
+                <div style="
+                    display:flex; 
+                    justify-content:space-between; 
+                    align-items:center; 
+                    background:#f9f9f9;
+                    border-radius:8px; 
+                    padding:10px 14px; 
+                    margin-bottom:8px;
+                    box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);
+                ">
+                    <span style="font-weight:500;">{m}</span>
+                    <span>
+                        <span style="background:{colors['bg']}; color:{colors['text']};
+                            padding:3px 10px; border-radius:6px; margin-right:8px;">
+                            {p}
+                        </span>
+                        <b>{c:.0f}%</b>
+                    </span>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # NOW close the card
+            st.markdown("</div>", unsafe_allow_html=True)
