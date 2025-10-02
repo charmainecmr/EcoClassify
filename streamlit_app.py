@@ -139,6 +139,14 @@ div[data-baseweb="tab"][aria-selected="true"] {
 
 tabs = st.tabs(["✨ Classify", "🕒 History"])
 
+# Color mapping for class labels
+class_colors = {
+    "glass":   {"bg": "#e3f2fd", "text": "#1565c0"},  # blue
+    "metal":   {"bg": "#ede7f6", "text": "#4527a0"},  # purple
+    "paper":   {"bg": "#fff3e0", "text": "#e65100"},  # orange
+    "plastic": {"bg": "#fce4ec", "text": "#ad1457"},  # pink
+}
+
 # --- Classify Tab ---
 with tabs[0]:
     uploaded = st.file_uploader("Upload a recyclable item image", type=["jpg","jpeg","png"])
@@ -146,7 +154,6 @@ with tabs[0]:
         image = Image.open(uploaded).convert("RGB")
 
         # --- Center & Style Uploaded Image ---
-        import base64, io
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
         img_b64 = base64.b64encode(buffer.getvalue()).decode()
@@ -194,16 +201,18 @@ with tabs[0]:
 
         st.subheader("Model Predictions")
         cols = st.columns(3)
-        for i, (mname, mpred, mconf) in enumerate(all_preds):
+        for i, (mname, mpred, mconf) in enumerate(all_preds):   
             bar_color = "#34a853" if mconf >= 80 else "#fbbc04" if mconf >= 50 else "#ea4335"
+            # Choose color based on predicted class
+            colors = class_colors.get(mpred.lower(), {"bg": "#e6f4ea", "text": "#137333"})
 
             with cols[i % 3]:
                 st.markdown(f"""
                 <div class="pred-card">
                   <h4>{mname}</h4>
                   <p style="margin-bottom:4px;"><b>Prediction:</b> 
-                    <span style="background:#e6f4ea; color:#137333; padding:2px 6px; 
-                    border-radius:6px;">{mpred}</span>
+                    <span style="background:{colors['bg']}; color:{colors['text']}; 
+                    padding:2px 6px; border-radius:6px;">{mpred}</span>
                   </p>
 
                   <p style="margin-bottom:6px;"><b>Confidence:</b> {mconf:.1f}%</p>
