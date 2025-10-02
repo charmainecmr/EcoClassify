@@ -7,6 +7,7 @@ from torchvision import transforms
 from PIL import Image
 import time
 from datetime import datetime
+import base64, io
 
 # --------------------------
 # Page Setup
@@ -143,7 +144,34 @@ with tabs[0]:
     uploaded = st.file_uploader("Upload a recyclable item image", type=["jpg","jpeg","png"])
     if uploaded:
         image = Image.open(uploaded).convert("RGB")
-        st.image(image, caption="Uploaded Image", use_column_width=True)
+
+        # --- Center & Style Uploaded Image ---
+        import base64, io
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        img_b64 = base64.b64encode(buffer.getvalue()).decode()
+
+        st.markdown(
+            f"""
+            <div style="display: flex; justify-content: center; align-items: center; flex-direction: column; margin: 20px 0;">
+                <div style="
+                    background: white;
+                    border-radius: 1rem;
+                    padding: 12px;
+                    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+                    transition: all 0.3s ease;
+                ">
+                    <img src="data:image/png;base64,{img_b64}" 
+                         width="300" 
+                         style="border-radius: 12px;"/>
+                </div>
+                <p style="text-align:center; font-size:0.9rem; color:gray; margin-top:8px;">
+                    Uploaded Image
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
         with st.spinner("Analyzing with 5 models..."):
             time.sleep(2)
@@ -182,8 +210,7 @@ with tabs[0]:
 
                   <!-- Progress Bar -->
                   <div style="background:#eee; border-radius:8px; height:10px; width:100%; margin-bottom:8px;">
-                    <div style="background:{bar_color}; height:10px; border-radius:8px; width:{mconf:.1f}%;">
-                    </div>
+                    <div style="background:{bar_color}; height:10px; border-radius:8px; width:{mconf:.1f}%;"></div>
                   </div>
 
                   <p style="color:green; background:#e6f4ea; padding:6px; border-radius:8px; 
@@ -193,13 +220,13 @@ with tabs[0]:
                 </div>
                 """, unsafe_allow_html=True)
 
-
         # Save to history
         st.session_state.history.insert(0, {
             "filename": uploaded.name,
             "timestamp": datetime.now().strftime("%m/%d/%Y, %I:%M:%S %p"),
             "results": all_preds
         })
+
 
 # --- History Tab ---
 with tabs[1]:
