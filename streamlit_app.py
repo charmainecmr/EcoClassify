@@ -10,10 +10,31 @@ from datetime import datetime
 import base64, io
 
 # --------------------------
-# Page Setup
+# Configure PyTorch for safe loading
 # --------------------------
+# PyTorch modules to safe globals for YOLO model loading
+torch.serialization.add_safe_globals([
+    torch.nn.modules.conv.Conv2d,
+    torch.nn.modules.batchnorm.BatchNorm2d,
+    torch.nn.modules.activation.SiLU,
+    torch.nn.modules.activation.Hardswish,
+    torch.nn.modules.linear.Linear,
+    torch.nn.modules.pooling.MaxPool2d,
+    torch.nn.modules.upsampling.Upsample,
+    torch.nn.Sequential,
+    torch.nn.ModuleList,
+])
+
+# Page Setup
 st.set_page_config(page_title="EcoClassify AI", page_icon="♻️", layout="wide")
 
+# Center the title with a darker green color
+st.markdown("""
+    <h1 style="text-align: center; font-size: 3rem; color: #388E3C;">EcoClassify AI</h1>
+    <h3 style="text-align: center; font-size: 1.5rem; color: #616161;">Classifying recyclable materials using AI models</h3>
+""", unsafe_allow_html=True)
+
+# Custom CSS for the page and layout
 st.markdown("""
 <style>
 html, body, [data-testid="stAppViewContainer"] {
@@ -38,34 +59,30 @@ html, body, [data-testid="stAppViewContainer"] {
   transform: translateY(-5px);
   box-shadow: 0 8px 25px rgba(0,0,0,0.2);
 }
-/* Center the tab container */
 div[data-baseweb="tab-list"] {
     display: flex;
     justify-content: center;
-    gap: 2rem; /* space between tabs */
+    gap: 2rem;
 }
-
 </style>
 """, unsafe_allow_html=True)
 
 # --------------------------
-# Load Models
+# Load Models (from models/ folder)
 # --------------------------
 @st.cache_resource
 def load_resnet34():
     num_classes = 4
     model = models.resnet34(pretrained=False)
-
-    # Rebuild the same head that was used in training
     model.fc = nn.Sequential(
-        nn.Linear(model.fc.in_features, 512),  # fc.0
-        nn.ReLU(),                             # fc.1
-        nn.Dropout(0.4),                       # fc.2 (if you had dropout)
-        nn.Linear(512, num_classes)            # fc.3
+        nn.Linear(model.fc.in_features, 512),
+        nn.ReLU(),
+        nn.Dropout(0.4),
+        nn.Linear(512, num_classes)
     )
-
-    state_dict = torch.load("best_resnet34.pth", map_location="cpu")
-    model.load_state_dict(state_dict)  # strict=True now works
+    # Use weights_only=False for custom model architectures if needed
+    state_dict = torch.load("models/best_resnet34.pth", map_location="cpu", weights_only=False)
+    model.load_state_dict(state_dict)
     model.eval()
     return model
 
@@ -74,12 +91,85 @@ def load_efficientnet_b0():
     num_classes = 4
     model = models.efficientnet_b0(pretrained=False)
     model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
-    model.load_state_dict(torch.load("best_efficientnet_b0.pth", map_location="cpu"))
+    # Use weights_only=False for custom model architectures if needed
+    model.load_state_dict(torch.load("models/best_efficientnet_b0.pth", map_location="cpu", weights_only=False))
     model.eval()
     return model
 
+@st.cache_resource
+def load_lenet():
+    num_classes = 4
+    class LeNet(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.conv1 = nn.Conv2d(3, 16, 5)
+            self.pool = nn.MaxPool2d(2, 2)
+            self.conv2 = nn.Conv2d(16, 32, 5)
+            self.fc1 = nn.Linear(32 * 53 * 53, 256)
+            self.fc2 = nn.Linear(256, 128)
+            self.fc3 = nn.Linear(128, num_classes)
+
+        def forward(self, x):
+            x = self.pool(torch.relu(self.conv1(x)))
+            x = self.pool(torch.relu(self.conv2(x)))
+            x = torch.flatten(x, 1)
+            x = torch.relu(self.fc1(x))
+            x = torch.relu(self.fc2(x))
+            x = self.fc3(x)
+            return x
+
+    model = LeNet()
+    # Use weights_only=False for custom model architectures if needed
+    model.load_state_dict(torch.load("models/best_lenet.pth", map_location="cpu", weights_only=False))
+    model.eval()
+    return model
+
+@st.cache_resource
+def load_yolo():
+    try:
+        # Import ultralytics modules to add all necessary classes
+        import ultralytics.nn.modules as nn_modules
+        
+        # Get all class types from ultralytics.nn.modules
+        module_classes = []
+        for name in dir(nn_modules):
+            attr = getattr(nn_modules, name)
+            if isinstance(attr, type):  # Only add classes
+                module_classes.append(attr)
+        
+        # Add all ultralytics module classes to safe globals
+        if module_classes:
+            torch.serialization.add_safe_globals(module_classes)
+        
+        # Alternative: If the above doesn't work, try loading with weights_only=False
+        # This is less secure but will work if you trust your model source
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            # Temporarily set weights_only to False for YOLO loading
+            original_load = torch.load
+            
+            def custom_load(*args, **kwargs):
+                kwargs['weights_only'] = False
+                return original_load(*args, **kwargs)
+            
+            torch.load = custom_load
+            model = YOLO("models/best.pt")
+            torch.load = original_load  # Restore original function
+            
+        return model
+        
+    except Exception as e:
+        st.error(f"Error loading YOLO model: {str(e)}")
+        # Return None if YOLO fails to load
+        return None
+
+# Load all models
 resnet34_model = load_resnet34()
 efficientnet_model = load_efficientnet_b0()
+lenet_model = load_lenet()
+yolo_model = load_yolo()
+
 class_names = ["glass", "metal", "paper", "plastic"]
 
 # --------------------------
@@ -93,7 +183,7 @@ transform = transforms.Compose([
 ])
 
 # --------------------------
-# Prediction
+# Predictions
 # --------------------------
 def predict(image: Image.Image, model, class_names):
     img_t = transform(image).unsqueeze(0)
@@ -103,8 +193,24 @@ def predict(image: Image.Image, model, class_names):
     conf, idx = torch.max(probs, 0)
     return class_names[idx], conf.item() * 100
 
+def predict_yolo(image: Image.Image):
+    if yolo_model is None:
+        return "YOLO model not loaded", 0
+    
+    try:
+        results = yolo_model.predict(image, conf=0.25, imgsz=640, verbose=False)
+        if len(results[0].boxes) > 0:
+            class_id = int(results[0].boxes.cls[0].item())
+            conf = float(results[0].boxes.conf[0].item()) * 100
+            label = results[0].names[class_id]
+            return label, conf
+        else:
+            return "No object detected", 0
+    except Exception as e:
+        return f"Error: {str(e)}", 0
+
 # --------------------------
-# Session State (History)
+# Session State
 # --------------------------
 if "history" not in st.session_state:
     st.session_state.history = []
@@ -112,9 +218,8 @@ if "history" not in st.session_state:
 # --------------------------
 # Tabs
 # --------------------------
-st.title("♻️ EcoClassify AI")
+tabs = st.tabs(["Classify", "History"])
 
-# Custom CSS to center tabs
 st.markdown("""
 <style>
 div[data-baseweb="tab-list"] {
@@ -136,15 +241,12 @@ div[data-baseweb="tab"][aria-selected="true"] {
 </style>
 """, unsafe_allow_html=True)
 
-
-tabs = st.tabs(["✨ Classify", "🕒 History"])
-
-# Color mapping for class labels
+# Class colors
 class_colors = {
-    "glass":   {"bg": "#e3f2fd", "text": "#1565c0"},  # blue
-    "metal":   {"bg": "#ede7f6", "text": "#4527a0"},  # purple
-    "paper":   {"bg": "#fff3e0", "text": "#e65100"},  # orange
-    "plastic": {"bg": "#fce4ec", "text": "#ad1457"},  # pink
+    "glass":   {"bg": "#e3f2fd", "text": "#1565c0"},
+    "metal":   {"bg": "#ede7f6", "text": "#4527a0"},
+    "paper":   {"bg": "#fff3e0", "text": "#e65100"},
+    "plastic": {"bg": "#fce4ec", "text": "#ad1457"},
 }
 
 # --- Classify Tab ---
@@ -153,28 +255,17 @@ with tabs[0]:
     if uploaded:
         image = Image.open(uploaded).convert("RGB")
 
-        # --- Center & Style Uploaded Image ---
+        # Center + styled preview
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
         img_b64 = base64.b64encode(buffer.getvalue()).decode()
-
         st.markdown(
             f"""
-            <div style="display: flex; justify-content: center; align-items: center; flex-direction: column; margin: 20px 0;">
-                <div style="
-                    background: white;
-                    border-radius: 1rem;
-                    padding: 12px;
-                    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-                    transition: all 0.3s ease;
-                ">
-                    <img src="data:image/png;base64,{img_b64}" 
-                         width="300" 
-                         style="border-radius: 12px;"/>
+            <div style="display:flex; justify-content:center; align-items:center; flex-direction:column; margin:20px 0;">
+                <div style="background:white; border-radius:1rem; padding:12px; box-shadow:0 4px 15px rgba(0,0,0,0.1);">
+                    <img src="data:image/png;base64,{img_b64}" width="300" style="border-radius:12px;"/>
                 </div>
-                <p style="text-align:center; font-size:0.9rem; color:gray; margin-top:8px;">
-                    Uploaded Image
-                </p>
+                <p style="text-align:center; font-size:0.9rem; color:gray; margin-top:8px;">Uploaded Image</p>
             </div>
             """,
             unsafe_allow_html=True
@@ -183,59 +274,44 @@ with tabs[0]:
         with st.spinner("Analyzing with 5 models..."):
             time.sleep(2)
 
-            # Real predictions
+            # Predictions
             resnet_pred, resnet_conf = predict(image, resnet34_model, class_names)
             effnet_pred, effnet_conf = predict(image, efficientnet_model, class_names)
-
-            # Mock others for layout
-            mock_models = [
-                ("MobileNet Model", resnet_pred, resnet_conf - 3),
-                ("VGG-16 Model", effnet_pred, effnet_conf - 4),
-                ("Inception Model", resnet_pred, resnet_conf + 5),
-            ]
+            lenet_pred, lenet_conf   = predict(image, lenet_model, class_names)
+            yolo_pred, yolo_conf     = predict_yolo(image)
 
             all_preds = [
                 ("ResNet-34 Model", resnet_pred, resnet_conf),
                 ("EfficientNet-B0 Model", effnet_pred, effnet_conf),
-            ] + mock_models
+                ("LeNet Model", lenet_pred, lenet_conf),
+                ("YOLOv8 Model", yolo_pred, yolo_conf),
+            ]
 
         st.subheader("Model Predictions")
-        cols = st.columns(3)
-        for i, (mname, mpred, mconf) in enumerate(all_preds):   
+        cols = st.columns(2)
+        for i, (mname, mpred, mconf) in enumerate(all_preds):
             bar_color = "#34a853" if mconf >= 80 else "#fbbc04" if mconf >= 50 else "#ea4335"
-            # Choose color based on predicted class
             colors = class_colors.get(mpred.lower(), {"bg": "#e6f4ea", "text": "#137333"})
-
-            with cols[i % 3]:
+            with cols[i % 2]:
                 st.markdown(f"""
                 <div class="pred-card">
                   <h4>{mname}</h4>
                   <p style="margin-bottom:4px;"><b>Prediction:</b> 
-                    <span style="background:{colors['bg']}; color:{colors['text']}; 
-                    padding:2px 6px; border-radius:6px;">{mpred}</span>
+                    <span style="background:{colors['bg']}; color:{colors['text']}; padding:2px 6px; border-radius:6px;">{mpred}</span>
                   </p>
-
                   <p style="margin-bottom:6px;"><b>Confidence:</b> {mconf:.1f}%</p>
-
-                  <!-- Progress Bar -->
                   <div style="background:#eee; border-radius:8px; height:10px; width:100%; margin-bottom:8px;">
                     <div style="background:{bar_color}; height:10px; border-radius:8px; width:{mconf:.1f}%;"></div>
                   </div>
-
-                  <p style="color:green; background:#e6f4ea; padding:6px; border-radius:8px; 
-                     font-size:90%; margin-top:8px;">
-                     ✅ Recyclable - Clean and place in recycling bin
-                  </p>
                 </div>
                 """, unsafe_allow_html=True)
 
-        # Save to history
+        # Save history
         st.session_state.history.insert(0, {
             "filename": uploaded.name,
             "timestamp": datetime.now().strftime("%m/%d/%Y, %I:%M:%S %p"),
             "results": all_preds
         })
-
 
 # --- History Tab ---
 with tabs[1]:
@@ -280,3 +356,4 @@ with tabs[1]:
 
             # NOW close the card
             st.markdown("</div>", unsafe_allow_html=True)
+
