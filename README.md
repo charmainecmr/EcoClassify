@@ -2,8 +2,6 @@
 
 A simple Streamlit app that classifies recylables.
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://document-question-answering-template.streamlit.app/)
-
 ### How to run it on your own machine
 
 1. Install the requirements
