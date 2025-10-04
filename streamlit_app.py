@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import torch
 import torch.nn as nn
@@ -12,7 +11,6 @@ import base64, io
 # --------------------------
 # Configure PyTorch for safe loading
 # --------------------------
-# PyTorch modules to safe globals for YOLO model loading
 torch.serialization.add_safe_globals([
     torch.nn.modules.conv.Conv2d,
     torch.nn.modules.batchnorm.BatchNorm2d,
@@ -26,15 +24,15 @@ torch.serialization.add_safe_globals([
 ])
 
 # Page Setup
-st.set_page_config(page_title="EcoClassify AI", page_icon="♻️", layout="wide")
+st.set_page_config(page_title="EcoClassify AI", layout="wide")
 
-# Center the title with a darker green color
+# Title
 st.markdown("""
     <h1 style="text-align: center; font-size: 3rem; color: #388E3C;">EcoClassify AI</h1>
     <h3 style="text-align: center; font-size: 1.5rem; color: #616161;">Classifying recyclable materials using AI models</h3>
 """, unsafe_allow_html=True)
 
-# Custom CSS for the page and layout
+# Custom CSS
 st.markdown("""
 <style>
 html, body, [data-testid="stAppViewContainer"] {
@@ -68,7 +66,7 @@ div[data-baseweb="tab-list"] {
 """, unsafe_allow_html=True)
 
 # --------------------------
-# Load Models (from models/ folder)
+# Load Models
 # --------------------------
 @st.cache_resource
 def load_resnet34():
@@ -80,7 +78,6 @@ def load_resnet34():
         nn.Dropout(0.4),
         nn.Linear(512, num_classes)
     )
-    # Use weights_only=False for custom model architectures if needed
     state_dict = torch.load("models/best_resnet34.pth", map_location="cpu", weights_only=False)
     model.load_state_dict(state_dict)
     model.eval()
@@ -91,7 +88,6 @@ def load_efficientnet_b0():
     num_classes = 4
     model = models.efficientnet_b0(pretrained=False)
     model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
-    # Use weights_only=False for custom model architectures if needed
     model.load_state_dict(torch.load("models/best_efficientnet_b0.pth", map_location="cpu", weights_only=False))
     model.eval()
     return model
@@ -119,7 +115,6 @@ def load_lenet():
             return x
 
     model = LeNet()
-    # Use weights_only=False for custom model architectures if needed
     model.load_state_dict(torch.load("models/best_lenet.pth", map_location="cpu", weights_only=False))
     model.eval()
     return model
@@ -127,48 +122,54 @@ def load_lenet():
 @st.cache_resource
 def load_yolo():
     try:
-        # Import ultralytics modules to add all necessary classes
-        import ultralytics.nn.modules as nn_modules
+        # Register YOLO-specific classes as safe globals
+        try:
+            from ultralytics.nn.tasks import DetectionModel
+            torch.serialization.add_safe_globals([DetectionModel])
+        except ImportError:
+            pass
         
-        # Get all class types from ultralytics.nn.modules
-        module_classes = []
-        for name in dir(nn_modules):
-            attr = getattr(nn_modules, name)
-            if isinstance(attr, type):  # Only add classes
-                module_classes.append(attr)
-        
-        # Add all ultralytics module classes to safe globals
-        if module_classes:
-            torch.serialization.add_safe_globals(module_classes)
-        
-        # Alternative: If the above doesn't work, try loading with weights_only=False
-        # This is less secure but will work if you trust your model source
+        # Try to register common ultralytics modules
+        try:
+            import ultralytics.nn.modules as nn_modules
+            module_classes = []
+            for name in dir(nn_modules):
+                attr = getattr(nn_modules, name)
+                if isinstance(attr, type):
+                    module_classes.append(attr)
+            if module_classes:
+                torch.serialization.add_safe_globals(module_classes)
+        except Exception:
+            pass
+
         import warnings
+        from ultralytics import YOLO
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            # Temporarily set weights_only to False for YOLO loading
-            original_load = torch.load
-            
-            def custom_load(*args, **kwargs):
-                kwargs['weights_only'] = False
-                return original_load(*args, **kwargs)
-            
-            torch.load = custom_load
+            # Load with weights_only=False to bypass the safe globals requirement
             model = YOLO("models/best.pt")
-            torch.load = original_load  # Restore original function
-            
         return model
-        
     except Exception as e:
         st.error(f"Error loading YOLO model: {str(e)}")
-        # Return None if YOLO fails to load
+        st.info("YOLO model will be skipped. Other models will continue to work.")
         return None
+
+@st.cache_resource
+def load_mobilenet():
+    num_classes = 4
+    model = models.mobilenet_v2(pretrained=False)
+    model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+    state_dict = torch.load("models/best_mobilenet.pth", map_location="cpu", weights_only=False)
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model
 
 # Load all models
 resnet34_model = load_resnet34()
 efficientnet_model = load_efficientnet_b0()
 lenet_model = load_lenet()
 yolo_model = load_yolo()
+mobilenet_model = load_mobilenet()
 
 class_names = ["glass", "metal", "paper", "plastic"]
 
@@ -195,8 +196,7 @@ def predict(image: Image.Image, model, class_names):
 
 def predict_yolo(image: Image.Image):
     if yolo_model is None:
-        return "YOLO model not loaded", 0
-    
+        return "YOLO model not available", 0
     try:
         results = yolo_model.predict(image, conf=0.25, imgsz=640, verbose=False)
         if len(results[0].boxes) > 0:
@@ -220,27 +220,6 @@ if "history" not in st.session_state:
 # --------------------------
 tabs = st.tabs(["Classify", "History"])
 
-st.markdown("""
-<style>
-div[data-baseweb="tab-list"] {
-    display: flex;
-    justify-content: center;
-    gap: 3rem;
-}
-div[data-baseweb="tab"] {
-    font-size: 1.2rem;
-    font-weight: 600;
-    padding: 1rem 2rem;
-    border-radius: 12px;
-}
-div[data-baseweb="tab"][aria-selected="true"] {
-    background: linear-gradient(90deg, #4caf50, #81c784);
-    color: white !important;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-}
-</style>
-""", unsafe_allow_html=True)
-
 # Class colors
 class_colors = {
     "glass":   {"bg": "#e3f2fd", "text": "#1565c0"},
@@ -249,13 +228,23 @@ class_colors = {
     "plastic": {"bg": "#fce4ec", "text": "#ad1457"},
 }
 
-# --- Classify Tab ---
+# --------------------------
+# Model → Weights mapping
+# --------------------------
+model_weights = {
+    "ResNet-34 Model": "models/best_resnet34.pth",
+    "EfficientNet-B0 Model": "models/best_efficientnet_b0.pth",
+    "LeNet Model": "models/best_lenet.pth",
+    "YOLOv8 Model": "models/best.pt",
+    "MobileNet-V2 Model": "models/best_mobilenet.pth"
+}
+
 with tabs[0]:
     uploaded = st.file_uploader("Upload a recyclable item image", type=["jpg","jpeg","png"])
     if uploaded:
         image = Image.open(uploaded).convert("RGB")
 
-        # Center + styled preview
+        # Preview
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
         img_b64 = base64.b64encode(buffer.getvalue()).decode()
@@ -271,40 +260,72 @@ with tabs[0]:
             unsafe_allow_html=True
         )
 
-        with st.spinner("Analyzing with 5 models..."):
+        with st.spinner("Analyzing with models..."):
             time.sleep(2)
+            resnet_pred, resnet_conf   = predict(image, resnet34_model, class_names)
+            effnet_pred, effnet_conf   = predict(image, efficientnet_model, class_names)
+            lenet_pred, lenet_conf     = predict(image, lenet_model, class_names)
+            mobilenet_pred, mobilenet_conf = predict(image, mobilenet_model, class_names)
+            
+            # Only predict with YOLO if it loaded successfully
+            if yolo_model is not None:
+                yolo_pred, yolo_conf = predict_yolo(image)
+                all_preds = [
+                    ("ResNet-34 Model", resnet_pred, resnet_conf),
+                    ("EfficientNet-B0 Model", effnet_pred, effnet_conf),
+                    ("LeNet Model", lenet_pred, lenet_conf),
+                    ("YOLOv8 Model", yolo_pred, yolo_conf),
+                    ("MobileNet-V2 Model", mobilenet_pred, mobilenet_conf),
+                ]
+            else:
+                all_preds = [
+                    ("ResNet-34 Model", resnet_pred, resnet_conf),
+                    ("EfficientNet-B0 Model", effnet_pred, effnet_conf),
+                    ("LeNet Model", lenet_pred, lenet_conf),
+                    ("MobileNet-V2 Model", mobilenet_pred, mobilenet_conf),
+                ]
 
-            # Predictions
-            resnet_pred, resnet_conf = predict(image, resnet34_model, class_names)
-            effnet_pred, effnet_conf = predict(image, efficientnet_model, class_names)
-            lenet_pred, lenet_conf   = predict(image, lenet_model, class_names)
-            yolo_pred, yolo_conf     = predict_yolo(image)
-
-            all_preds = [
-                ("ResNet-34 Model", resnet_pred, resnet_conf),
-                ("EfficientNet-B0 Model", effnet_pred, effnet_conf),
-                ("LeNet Model", lenet_pred, lenet_conf),
-                ("YOLOv8 Model", yolo_pred, yolo_conf),
-            ]
-
+        # --------------------------
+        # Show Model Predictions
+        # --------------------------
         st.subheader("Model Predictions")
         cols = st.columns(2)
         for i, (mname, mpred, mconf) in enumerate(all_preds):
             bar_color = "#34a853" if mconf >= 80 else "#fbbc04" if mconf >= 50 else "#ea4335"
             colors = class_colors.get(mpred.lower(), {"bg": "#e6f4ea", "text": "#137333"})
+
             with cols[i % 2]:
-                st.markdown(f"""
-                <div class="pred-card">
-                  <h4>{mname}</h4>
-                  <p style="margin-bottom:4px;"><b>Prediction:</b> 
-                    <span style="background:{colors['bg']}; color:{colors['text']}; padding:2px 6px; border-radius:6px;">{mpred}</span>
-                  </p>
-                  <p style="margin-bottom:6px;"><b>Confidence:</b> {mconf:.1f}%</p>
-                  <div style="background:#eee; border-radius:8px; height:10px; width:100%; margin-bottom:8px;">
-                    <div style="background:{bar_color}; height:10px; border-radius:8px; width:{mconf:.1f}%;"></div>
-                  </div>
-                </div>
-                """, unsafe_allow_html=True)
+                with st.container():
+                    # Open card
+                    st.markdown(f"""
+                    <div class="pred-card">
+                      <h4>{mname}</h4>
+                      <p style="margin-bottom:4px;"><b>Prediction:</b> 
+                        <span style="background:{colors['bg']}; color:{colors['text']}; 
+                            padding:2px 6px; border-radius:6px;">{mpred}</span>
+                      </p>
+                      <p style="margin-bottom:6px;"><b>Confidence:</b> {mconf:.1f}%</p>
+                      <div style="background:#eee; border-radius:8px; height:10px; width:100%; margin-bottom:8px;">
+                        <div style="background:{bar_color}; height:10px; border-radius:8px; width:{mconf:.1f}%;"></div>
+                      </div>
+                    """, unsafe_allow_html=True)
+
+                    # Download button inside card
+                    weight_path = model_weights.get(mname)
+                    if weight_path:
+                        try:
+                            with open(weight_path, "rb") as f:
+                                btn_bytes = f.read()
+                            st.download_button(
+                                label=f"↑ Download {mname} Weights",
+                                data=btn_bytes,
+                                file_name=weight_path.split("/")[-1],
+                                mime="application/octet-stream",
+                                key=f"download-{mname}"
+                            )
+                        except FileNotFoundError:
+                            pass
+                    st.markdown("</div>", unsafe_allow_html=True)
 
         # Save history
         st.session_state.history.insert(0, {
@@ -317,43 +338,29 @@ with tabs[0]:
 with tabs[1]:
     st.header("Classification History")
     st.caption("View your past classifications and model predictions")
-
     if not st.session_state.history:
         st.info("No classifications yet. Upload an image to get started!")
     else:
         for entry in st.session_state.history:
-            # Card container (open, don't close yet)
             st.markdown(f"""
             <div class="pred-card" style="padding:1.5rem; margin-bottom:1.5rem;">
               <b style="font-size:1.1rem;">{entry['filename']}</b><br>
-              <small style="color:gray;">🕒 {entry['timestamp']}</small><br><br>
+              <small style="color:gray;"> {entry['timestamp']}</small><br><br>
             """, unsafe_allow_html=True)
 
-            # Loop through model results (rows stay inside this card)
             for m, p, c in entry["results"]:
                 colors = class_colors.get(p.lower(), {"bg": "#e6f4ea", "text": "#137333"})
                 st.markdown(f"""
-                <div style="
-                    display:flex; 
-                    justify-content:space-between; 
-                    align-items:center; 
-                    background:#f9f9f9;
-                    border-radius:8px; 
-                    padding:10px 14px; 
-                    margin-bottom:8px;
-                    box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);
-                ">
+                <div style="display:flex; justify-content:space-between; align-items:center;
+                    background:#f9f9f9; border-radius:8px; padding:10px 14px; margin-bottom:8px;
+                    box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);">
                     <span style="font-weight:500;">{m}</span>
                     <span>
                         <span style="background:{colors['bg']}; color:{colors['text']};
-                            padding:3px 10px; border-radius:6px; margin-right:8px;">
-                            {p}
-                        </span>
+                            padding:3px 10px; border-radius:6px; margin-right:8px;">{p}</span>
                         <b>{c:.0f}%</b>
                     </span>
                 </div>
                 """, unsafe_allow_html=True)
 
-            # NOW close the card
             st.markdown("</div>", unsafe_allow_html=True)
-
